@@ -760,121 +760,356 @@ const AdminDashboard = ({ tickets }: { tickets: Ticket[] }) => {
   );
 };
 
-const GateScanner = ({ tickets, onEntry }: { tickets: Ticket[], onEntry: (id: string) => void }) => {
+const GateScanner = ({ tickets, onEntry, events, selectedEventId, onSelectEvent, onBack }: { 
+  tickets: Ticket[], 
+  onEntry: (id: string) => void,
+  events: Event[],
+  selectedEventId: string | null,
+  onSelectEvent: (eventId: string) => void,
+  onBack: () => void
+}) => {
   const [scannedData, setScannedData] = useState<{ticket?: Ticket, match: boolean, loading: boolean, message?: string} | null>(null);
+  const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [verifiedTicket, setVerifiedTicket] = useState<Ticket | null>(null);
+  const [isCheckingEmail, setIsCheckingEmail] = useState(false);
 
-  const handleScan = async (base64: string) => {
-    setScannedData({ match: false, loading: true });
-    
-    // Use Gemini to find the user in the list of tickets
-    const result = await identifyUserAtGate(base64, tickets);
-    
-    if (result.matchFound && result.ticketId) {
-      const ticket = tickets.find(t => t.id === result.ticketId);
-      if (ticket) {
-        onEntry(ticket.id);
-        setScannedData({
-          match: true,
-          loading: false,
-          ticket: ticket,
-          message: `Confiança: ${result.confidence}`
-        });
+  // Filtrar tickets apenas do evento selecionado
+  const eventTickets = selectedEventId 
+    ? tickets.filter(t => t.eventId === selectedEventId && t.status !== TicketStatus.USED)
+    : [];
+
+  const selectedEvent = events.find(e => e.id === selectedEventId);
+
+  // Verificar se o email está cadastrado no evento
+  const handleEmailCheck = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEmailError(null);
+    setIsCheckingEmail(true);
+
+    // Buscar ticket pelo email no evento selecionado
+    const ticket = eventTickets.find(t => 
+      t.user.email.toLowerCase() === email.toLowerCase().trim()
+    );
+
+    setIsCheckingEmail(false);
+
+    if (ticket) {
+      if (ticket.status === TicketStatus.USED) {
+        setEmailError('Este ingresso já foi utilizado.');
         return;
       }
+      setVerifiedTicket(ticket);
+    } else {
+      setEmailError('Email não encontrado para este evento. Verifique se digitou corretamente.');
+    }
+  };
+
+  // Reset para nova verificação
+  const resetToEmailCheck = () => {
+    setEmail('');
+    setEmailError(null);
+    setVerifiedTicket(null);
+    setScannedData(null);
+  };
+
+  const handleScan = async (base64: string) => {
+    if (!verifiedTicket) return;
+    
+    setScannedData({ match: false, loading: true });
+    
+    // Comparar apenas com o ticket verificado por email
+    const result = await identifyUserAtGate(base64, [verifiedTicket]);
+    
+    if (result.matchFound && result.ticketId === verifiedTicket.id) {
+      onEntry(verifiedTicket.id);
+      setScannedData({
+        match: true,
+        loading: false,
+        ticket: verifiedTicket,
+        message: `Confiança: ${result.confidence}`
+      });
+      return;
     }
 
     setScannedData({
       match: false,
       loading: false,
-      message: "Rosto não encontrado no banco de dados do evento."
+      message: "O rosto não corresponde ao cadastro deste email."
     });
   };
 
   const reset = () => setScannedData(null);
 
+  // Se nenhum evento selecionado, mostrar lista de eventos
+  if (!selectedEventId) {
+    return (
+      <div className="min-h-[calc(100vh-4rem)] p-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-r from-brand-500 to-accent-500 mb-4">
+              <ScanFace className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-3xl font-bold text-white mb-2">Catraca de Acesso</h1>
+            <p className="text-gray-400">Selecione o evento para iniciar a validação</p>
+          </div>
+
+          {events.length === 0 ? (
+            <div className="text-center py-12">
+              <Calendar className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+              <p className="text-gray-400">Nenhum evento ativo encontrado</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {events.map((event) => {
+                const eventTicketCount = tickets.filter(t => t.eventId === event.id).length;
+                const usedTickets = tickets.filter(t => t.eventId === event.id && t.status === TicketStatus.USED).length;
+                
+                return (
+                  <button
+                    key={event.id}
+                    onClick={() => onSelectEvent(event.id)}
+                    className="bg-gray-800/50 rounded-2xl overflow-hidden border border-gray-700 hover:border-brand-500 transition-all text-left group hover:shadow-xl hover:shadow-brand-500/10"
+                  >
+                    <div className="relative h-32 overflow-hidden">
+                      <img 
+                        src={event.image} 
+                        alt={event.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-gray-900 to-transparent" />
+                      <div className="absolute bottom-3 left-4 right-4">
+                        <h3 className="text-lg font-bold text-white">{event.name}</h3>
+                      </div>
+                    </div>
+                    
+                    <div className="p-4">
+                      <div className="flex items-center justify-between text-sm mb-3">
+                        <div className="flex items-center gap-2 text-gray-400">
+                          <Calendar size={14} />
+                          <span>{new Date(event.date).toLocaleDateString('pt-BR')}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-gray-400">
+                          <MapPin size={14} />
+                          <span className="truncate max-w-[120px]">{event.location}</span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm">
+                          <span className="text-green-400 font-bold">{usedTickets}</span>
+                          <span className="text-gray-500"> / {eventTicketCount} entradas</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-brand-400 font-medium text-sm">
+                          <span>Selecionar</span>
+                          <ArrowRight size={16} />
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Evento selecionado - mostrar scanner
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex flex-col lg:flex-row">
-      {/* Left: Scanner */}
-      <div className="w-full lg:w-1/2 p-6 flex flex-col items-center justify-center border-b lg:border-b-0 lg:border-r border-gray-800">
-        <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-          <ScanFace className="text-brand-500" />
-          Catraca de Acesso
-        </h2>
-        
-        {scannedData?.loading ? (
-           <div className="flex flex-col items-center justify-center h-64">
-             <Loader2 className="w-16 h-16 text-brand-500 animate-spin mb-4" />
-             <p className="text-xl font-mono text-brand-200">IDENTIFICANDO...</p>
-           </div>
-        ) : scannedData ? (
-           <div className="text-center animate-fade-in">
-             <button onClick={reset} className="mb-6 text-gray-400 hover:text-white underline">Escanear Próximo</button>
-           </div>
-        ) : (
-          <CameraCapture onCapture={handleScan} label="Escanear Visitante" />
-        )}
+    <div className="min-h-[calc(100vh-4rem)] flex flex-col">
+      {/* Header com info do evento */}
+      <div className="bg-gray-800/50 border-b border-gray-700 px-6 py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <button 
+            onClick={onBack}
+            className="flex items-center gap-2 text-gray-400 hover:text-white transition"
+          >
+            <ArrowRight className="rotate-180" size={18} />
+            <span>Voltar</span>
+          </button>
+          
+          {selectedEvent && (
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <h2 className="text-white font-bold">{selectedEvent.name}</h2>
+                <p className="text-sm text-gray-400">
+                  {eventTickets.length} ingressos pendentes
+                </p>
+              </div>
+              <img 
+                src={selectedEvent.image} 
+                alt={selectedEvent.name}
+                className="w-12 h-12 rounded-lg object-cover border border-gray-600"
+              />
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Right: Result Display */}
-      <div className={`w-full lg:w-1/2 p-8 flex flex-col justify-center transition-colors duration-500 ${
-        scannedData?.match ? 'bg-green-900/20' : scannedData && !scannedData.loading ? 'bg-red-900/20' : 'bg-gray-900/50'
-      }`}>
-        {!scannedData ? (
-          <div className="text-center text-gray-500">
-            <ShieldCheck className="w-24 h-24 mx-auto mb-4 opacity-20" />
-            <p className="text-xl">Aguardando leitura biométrica...</p>
-          </div>
-        ) : scannedData.loading ? (
-          <div className="text-center text-gray-400">Analizando vetores faciais...</div>
-        ) : scannedData.match && scannedData.ticket ? (
-          <div className="text-center space-y-6">
-            <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-green-500 text-white mb-4 shadow-lg shadow-green-500/50">
-              <CheckCircle2 size={48} />
-            </div>
-            <h2 className="text-4xl font-extrabold text-white tracking-wide">ACESSO LIBERADO</h2>
-            
-            <div className="bg-gray-800 p-6 rounded-2xl border border-gray-700 max-w-md mx-auto shadow-2xl">
-              <div className="flex items-center space-x-4 mb-6">
-                {scannedData.ticket.faceImageBase64 && (
-                   <img src={scannedData.ticket.faceImageBase64} alt="User" className="w-20 h-20 rounded-full object-cover border-2 border-green-500" />
+      <div className="flex-1 flex flex-col lg:flex-row">
+        {/* Left: Email Check ou Scanner */}
+        <div className="w-full lg:w-1/2 p-6 flex flex-col items-center justify-center border-b lg:border-b-0 lg:border-r border-gray-800">
+          
+          {/* Etapa 1: Verificação de Email */}
+          {!verifiedTicket && (
+            <div className="w-full max-w-md">
+              <h2 className="text-2xl font-bold text-white mb-2 text-center flex items-center justify-center gap-2">
+                <UserIcon className="text-brand-500" />
+                Verificação de Entrada
+              </h2>
+              <p className="text-gray-400 text-center mb-6">Digite o email cadastrado para validar</p>
+              
+              <form onSubmit={handleEmailCheck} className="space-y-4">
+                {emailError && (
+                  <div className="bg-red-900/50 border border-red-500 text-red-200 p-3 rounded-lg flex items-center gap-2 text-sm">
+                    <AlertCircle size={18} />
+                    <span>{emailError}</span>
+                  </div>
                 )}
-                <div className="text-left">
-                  <h3 className="text-xl font-bold text-white">{scannedData.ticket.user.name}</h3>
-                  <p className="text-gray-400">{scannedData.ticket.type}</p>
+                
+                <div>
+                  <label className="block text-gray-400 text-sm mb-2">Email do participante</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-4 text-white text-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                    placeholder="email@exemplo.com"
+                    required
+                    autoFocus
+                  />
                 </div>
+                
+                <button
+                  type="submit"
+                  disabled={isCheckingEmail || !email}
+                  className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl transition flex items-center justify-center gap-2"
+                >
+                  {isCheckingEmail ? (
+                    <>
+                      <Loader2 className="animate-spin" size={20} />
+                      <span>Verificando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={20} />
+                      <span>Verificar Cadastro</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* Etapa 2: Scanner de Face */}
+          {verifiedTicket && (
+            <>
+              <div className="text-center mb-4">
+                <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 mb-4 inline-block">
+                  <p className="text-green-400 font-medium flex items-center gap-2">
+                    <CheckCircle2 size={18} />
+                    Cadastro verificado: {verifiedTicket.user.name}
+                  </p>
+                </div>
+                <button 
+                  onClick={resetToEmailCheck}
+                  className="text-gray-400 hover:text-white text-sm underline"
+                >
+                  Verificar outro email
+                </button>
               </div>
               
-              <div className="grid grid-cols-2 gap-4 text-left text-sm">
-                <div>
-                  <span className="block text-gray-500">CPF</span>
-                  <span className="text-gray-200">{scannedData.ticket.user.cpf}</span>
-                </div>
-                <div>
-                  <span className="block text-gray-500">ID do Ingresso</span>
-                  <span className="text-gray-200 font-mono">{scannedData.ticket.id}</span>
-                </div>
-              </div>
-
-              {scannedData.message && (
-                 <div className="mt-4 pt-4 border-t border-gray-700 text-xs text-green-400 font-mono">
-                   IA: {scannedData.message}
+              <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+                <ScanFace className="text-brand-500" />
+                Validação Biométrica
+              </h2>
+              
+              {scannedData?.loading ? (
+                 <div className="flex flex-col items-center justify-center h-64">
+                   <Loader2 className="w-16 h-16 text-brand-500 animate-spin mb-4" />
+                   <p className="text-xl font-mono text-brand-200">IDENTIFICANDO...</p>
                  </div>
+              ) : scannedData ? (
+                 <div className="text-center animate-fade-in">
+                   <button onClick={resetToEmailCheck} className="mb-6 text-gray-400 hover:text-white underline">Próximo Visitante</button>
+                 </div>
+              ) : (
+                <CameraCapture onCapture={handleScan} label="Escanear Rosto" />
               )}
+            </>
+          )}
+        </div>
+
+        {/* Right: Result Display */}
+        <div className={`w-full lg:w-1/2 p-8 flex flex-col justify-center transition-colors duration-500 ${
+          scannedData?.match ? 'bg-green-900/20' : scannedData && !scannedData.loading ? 'bg-red-900/20' : 'bg-gray-900/50'
+        }`}>
+          {!verifiedTicket ? (
+            <div className="text-center text-gray-500">
+              <UserIcon className="w-24 h-24 mx-auto mb-4 opacity-20" />
+              <p className="text-xl">Digite o email para iniciar</p>
+              <p className="text-sm mt-2">A validação biométrica será liberada após verificação do cadastro</p>
             </div>
-          </div>
-        ) : (
-          <div className="text-center space-y-6">
-            <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-red-500 text-white mb-4 shadow-lg shadow-red-500/50">
-              <LogOut size={48} /> {/* Using Logout icon as 'Access Denied' visual */}
+          ) : !scannedData ? (
+            <div className="text-center text-gray-500">
+              <ShieldCheck className="w-24 h-24 mx-auto mb-4 opacity-20" />
+              <p className="text-xl">Aguardando leitura biométrica...</p>
+              <p className="text-sm mt-2">Posicione o rosto de <span className="text-brand-400 font-medium">{verifiedTicket.user.name}</span> na câmera</p>
             </div>
-            <h2 className="text-4xl font-extrabold text-white tracking-wide">ACESSO NEGADO</h2>
-            <p className="text-red-300 text-xl">{scannedData.message}</p>
-            <div className="p-4 bg-red-900/30 rounded-lg max-w-md mx-auto border border-red-800">
-              <p className="text-gray-300 text-sm">O rosto escaneado não corresponde a nenhum ingresso válido ou ativo no sistema.</p>
+          ) : scannedData.loading ? (
+            <div className="text-center text-gray-400">Analizando vetores faciais...</div>
+          ) : scannedData.match && scannedData.ticket ? (
+            <div className="text-center space-y-6">
+              <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-green-500 text-white mb-4 shadow-lg shadow-green-500/50">
+                <CheckCircle2 size={48} />
+              </div>
+              <h2 className="text-4xl font-extrabold text-white tracking-wide">ACESSO LIBERADO</h2>
+              
+              <div className="bg-gray-800 p-6 rounded-2xl border border-gray-700 max-w-md mx-auto shadow-2xl">
+                <div className="flex items-center space-x-4 mb-6">
+                  {scannedData.ticket.faceImageBase64 && (
+                     <img src={scannedData.ticket.faceImageBase64} alt="User" className="w-20 h-20 rounded-full object-cover border-2 border-green-500" />
+                  )}
+                  <div className="text-left">
+                    <h3 className="text-xl font-bold text-white">{scannedData.ticket.user.name}</h3>
+                    <p className="text-gray-400">{scannedData.ticket.type}</p>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 text-left text-sm">
+                  <div>
+                    <span className="block text-gray-500">CPF</span>
+                    <span className="text-gray-200">{scannedData.ticket.user.cpf}</span>
+                  </div>
+                  <div>
+                    <span className="block text-gray-500">ID do Ingresso</span>
+                    <span className="text-gray-200 font-mono">{scannedData.ticket.id}</span>
+                  </div>
+                </div>
+
+                {scannedData.message && (
+                   <div className="mt-4 pt-4 border-t border-gray-700 text-xs text-green-400 font-mono">
+                     IA: {scannedData.message}
+                   </div>
+                )}
+              </div>
             </div>
-            <button onClick={reset} className="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-white font-bold">Tentar Novamente</button>
-          </div>
-        )}
+          ) : (
+            <div className="text-center space-y-6">
+              <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-red-500 text-white mb-4 shadow-lg shadow-red-500/50">
+                <LogOut size={48} />
+              </div>
+              <h2 className="text-4xl font-extrabold text-white tracking-wide">ACESSO NEGADO</h2>
+              <p className="text-red-300 text-xl">{scannedData.message}</p>
+              <div className="p-4 bg-red-900/30 rounded-lg max-w-md mx-auto border border-red-800">
+                <p className="text-gray-300 text-sm">O rosto escaneado não corresponde ao cadastro do email informado.</p>
+              </div>
+              <button onClick={resetToEmailCheck} className="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-white font-bold">Tentar Novamente</button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -888,15 +1123,67 @@ const AppContent = () => {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [gateEventId, setGateEventId] = useState<string | null>(null); // Evento selecionado na catraca
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastPurchasedTicket, setLastPurchasedTicket] = useState<Ticket | null>(null);
   const [isLoadingTickets, setIsLoadingTickets] = useState(true);
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
 
+  // Mapeamento de rotas válidas (gate pode ter sub-rotas para eventos)
+  const validRoutes = ['home', 'admin', 'admin-events', 'gate', 'login'];
+
+  // Sincronizar hash da URL com a view
+  useEffect(() => {
+    const handleHashChange = () => {
+      const fullHash = window.location.hash.replace('#/', '').replace('#', '') || 'home';
+      
+      // Verificar se é uma rota de catraca com evento específico
+      if (fullHash.startsWith('gate/')) {
+        const eventId = fullHash.replace('gate/', '');
+        setView('gate');
+        setGateEventId(eventId);
+        return;
+      }
+      
+      if (validRoutes.includes(fullHash)) {
+        setView(fullHash);
+        // Se for gate sem evento, limpar seleção
+        if (fullHash === 'gate') {
+          setGateEventId(null);
+        }
+      } else {
+        // Rota inválida - redireciona para home
+        window.location.hash = '#/home';
+        setView('home');
+      }
+    };
+
+    // Verificar hash inicial
+    handleHashChange();
+
+    // Listener para mudanças de hash
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // Atualizar hash quando a view mudar (exceto event-register que é temporária)
+  useEffect(() => {
+    if (view !== 'event-register') {
+      window.location.hash = `#/${view}`;
+    }
+  }, [view]);
+
   // Redirecionar para login se tentar acessar área admin sem autenticação
   useEffect(() => {
     if ((view === 'admin' || view === 'admin-events') && !isAuthenticated) {
       setView('login');
+    }
+  }, [view, isAuthenticated]);
+
+  // Redirecionar para admin-events após login bem-sucedido
+  useEffect(() => {
+    if (view === 'login' && isAuthenticated) {
+      setView('admin-events');
     }
   }, [view, isAuthenticated]);
 
@@ -981,7 +1268,22 @@ const AppContent = () => {
         )}
         {view === 'admin' && isAuthenticated && <AdminDashboard tickets={tickets} />}
         {view === 'admin-events' && isAuthenticated && <AdminEvents />}
-        {view === 'gate' && <GateScanner tickets={tickets} onEntry={handleEntry} />}
+        {view === 'gate' && (
+          <GateScanner 
+            tickets={tickets} 
+            onEntry={handleEntry}
+            events={events}
+            selectedEventId={gateEventId}
+            onSelectEvent={(eventId) => {
+              setGateEventId(eventId);
+              window.location.hash = `#/gate/${eventId}`;
+            }}
+            onBack={() => {
+              setGateEventId(null);
+              window.location.hash = '#/gate';
+            }}
+          />
+        )}
       </main>
 
       {/* Success Modal */}

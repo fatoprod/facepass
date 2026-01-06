@@ -14,13 +14,13 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, setView, isAuthenti
   // Itens públicos sempre visíveis
   const publicItems = [
     { id: 'home', label: 'Eventos', icon: Ticket },
+    { id: 'gate', label: 'Catraca', icon: ShieldCheck },
   ];
 
   // Itens admin só visíveis quando autenticado
   const adminItems = [
     { id: 'admin-events', label: 'Gerenciar Eventos', icon: Calendar },
     { id: 'admin', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'gate', label: 'Catraca', icon: ShieldCheck },
   ];
 
   const navItems = isAuthenticated 

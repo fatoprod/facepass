@@ -82,8 +82,10 @@ service cloud.firestore {
       // Apenas gerentes e admins podem criar eventos
       allow create: if isManagerOrHigher() && isActiveUser() && isValidEvent(request.resource.data);
       
-      // Apenas gerentes e admins podem atualizar eventos
-      allow update: if isManagerOrHigher() && isActiveUser();
+      // Gerentes e admins podem atualizar qualquer campo
+      // Qualquer pessoa pode incrementar currentAttendees (ao comprar ingresso)
+      allow update: if (isManagerOrHigher() && isActiveUser())
+        || isValidAttendeeIncrement(request.resource.data, resource.data);
       
       // Apenas admins podem deletar eventos
       allow delete: if isAdmin() && isActiveUser();
@@ -93,18 +95,18 @@ service cloud.firestore {
     // COLEÇÃO DE TICKETS
     // ==========================================
     match /tickets/{ticketId} {
-      // Operadores, gerentes e admins podem ler tickets (para validação na catraca)
-      // Usuários podem ver seus próprios tickets
-      allow read: if isOperatorOrHigher() || 
-        (isAuthenticated() && resource.data.userId == request.auth.uid);
+      // Leitura: Operadores+ podem ler todos, ou usuário autenticado vê seus próprios
+      // Para catraca (scanner de rosto), permitir leitura pública
+      allow read: if true;
       
-      // Qualquer usuário autenticado pode comprar tickets
-      allow create: if isAuthenticated() && isActiveUser() && isValidTicket(request.resource.data);
+      // Qualquer pessoa pode comprar/cadastrar tickets (para eventos gratuitos)
+      // Validação de estrutura é feita pela função isValidTicket
+      allow create: if isValidTicket(request.resource.data);
       
-      // Operadores podem atualizar status (para marcar como usado)
+      // Operadores podem atualizar status (para marcar como usado na catraca)
       // Gerentes e admins têm acesso total
-      allow update: if (isOperatorOrHigher() && isActiveUser() && isValidStatusUpdate(request.resource.data, resource.data))
-        || isManagerOrHigher();
+      // Para catraca funcionar sem auth, permitir update de status
+      allow update: if isValidStatusUpdate(request.resource.data, resource.data);
       
       // Apenas admins podem deletar tickets
       allow delete: if isAdmin() && isActiveUser();
@@ -117,8 +119,8 @@ service cloud.firestore {
       // Apenas admins e gerentes podem ler logs
       allow read: if isManagerOrHigher() && isActiveUser();
       
-      // Operadores podem criar logs (registro de entrada na catraca)
-      allow create: if isOperatorOrHigher() && isActiveUser();
+      // Qualquer sistema pode criar logs (registro de entrada na catraca)
+      allow create: if true;
       
       // Ninguém pode atualizar ou deletar logs
       allow update, delete: if false;
@@ -137,6 +139,18 @@ service cloud.firestore {
         && data.price >= 0
         && data.maxCapacity is number
         && data.maxCapacity > 0;
+    }
+    
+    // Função para validar incremento de participantes (apenas +1)
+    function isValidAttendeeIncrement(newData, existingData) {
+      return newData.currentAttendees == existingData.currentAttendees + 1
+        && newData.name == existingData.name
+        && newData.date == existingData.date
+        && newData.location == existingData.location
+        && newData.isFree == existingData.isFree
+        && newData.price == existingData.price
+        && newData.maxCapacity == existingData.maxCapacity
+        && newData.isActive == existingData.isActive;
     }
     
     // Função para validar estrutura do ticket
