@@ -62,13 +62,13 @@ export const validateFaceForRegistration = async (imageBase64: string): Promise<
 export const identifyUserAtGate = async (
   scannedImageBase64: string, 
   candidates: Ticket[]
-): Promise<{ matchFound: boolean; ticketId?: string; confidence?: string }> => {
+): Promise<{ matchFound: boolean; ticketId?: string; confidence?: string; faceDetected?: boolean }> => {
   
   // Filter candidates that have base64 images
   const validCandidates = candidates.filter(t => t.faceImageBase64);
 
   if (validCandidates.length === 0) {
-    return { matchFound: false, confidence: 'N/A' };
+    return { matchFound: false, confidence: 'N/A', faceDetected: false };
   }
 
   try {
@@ -77,8 +77,36 @@ export const identifyUserAtGate = async (
 
     // Construct the prompt with the target image and labeled candidate images
     const parts: any[] = [
-      { text: "You are a security officer at an event turnstile. Your task is to identify if the person in the 'TARGET_IMAGE' matches any of the persons in the 'CANDIDATE_IMAGES'.\n\nAnalyze facial features carefully.\n\nReturn JSON with:\n- `matchFound` (boolean): true if the person matches any candidate\n- `candidateId` (string): the matching ID, or null if no match\n- `confidence` (string): ALWAYS provide a confidence level as 'High', 'Medium', or 'Low' based on how certain you are of the match or non-match" },
-      { text: "TARGET_IMAGE:" },
+      { text: `You are an advanced FACIAL RECOGNITION system at a security checkpoint.
+
+STEP 1 - FACE DETECTION:
+First, check if there is a CLEAR, UNOBSTRUCTED human face in the TARGET_IMAGE.
+- The face must be visible (not covered by hands, objects, masks, etc.)
+- The face must be recognizable (eyes, nose, mouth visible)
+- If NO clear face is detected, return: { "faceDetected": false, "matchFound": false, "candidateId": null, "confidence": "N/A" }
+
+STEP 2 - FACIAL COMPARISON (only if face detected):
+Compare the BIOMETRIC FEATURES of the face in TARGET_IMAGE with REGISTERED_IMAGE:
+- Face shape and structure
+- Eye shape, spacing, and position
+- Nose shape and size
+- Mouth shape
+- Eyebrow shape
+- Forehead and jawline
+
+CRITICAL SECURITY RULES:
+1. ONLY compare FACIAL FEATURES - ignore background, clothing, lighting differences
+2. The faces must belong to THE SAME PERSON to return matchFound=true
+3. If the face is partially obscured or unclear, return faceDetected=false
+4. Be STRICT - false positives are a security risk
+5. Different angles/expressions are OK, but core features must match
+
+Return JSON with:
+- faceDetected (boolean): true only if a clear face is visible in TARGET_IMAGE
+- matchFound (boolean): true only if faces match AND faceDetected is true
+- candidateId (string): matching ID if matchFound, otherwise null
+- confidence (string): 'High', 'Medium', or 'Low'` },
+      { text: "TARGET_IMAGE (person at the gate - verify face is visible first):" },
       { 
         inlineData: { 
           mimeType: "image/jpeg", 
@@ -90,7 +118,7 @@ export const identifyUserAtGate = async (
     // Add candidates to the prompt
     for (const ticket of validCandidates) {
       if (ticket.faceImageBase64) {
-        parts.push({ text: `CANDIDATE_ID: ${ticket.id}` });
+        parts.push({ text: `REGISTERED_IMAGE (ID: ${ticket.id}):` });
         parts.push({
           inlineData: {
             mimeType: "image/jpeg",
@@ -101,36 +129,49 @@ export const identifyUserAtGate = async (
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash", // Efficient for multimodal comparison
+      model: "gemini-2.0-flash",
       contents: { parts },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
+            faceDetected: { type: Type.BOOLEAN, description: "Is a clear, unobstructed face visible in TARGET_IMAGE?" },
             matchFound: { type: Type.BOOLEAN },
             candidateId: { type: Type.STRING, nullable: true },
             confidence: { type: Type.STRING, description: "Confidence level: High, Medium, or Low" }
           },
-          required: ["matchFound", "confidence"]
+          required: ["faceDetected", "matchFound", "confidence"]
         }
       }
     });
 
     const result = JSON.parse(response.text || "{}");
     
+    console.log('Gemini raw response:', result);
+    
+    // Se não detectou rosto, retornar imediatamente
+    if (!result.faceDetected) {
+      return { 
+        matchFound: false, 
+        faceDetected: false,
+        confidence: 'N/A'
+      };
+    }
+    
     if (result.matchFound && result.candidateId) {
       return { 
         matchFound: true, 
         ticketId: result.candidateId,
-        confidence: result.confidence || 'Unknown'
+        confidence: result.confidence || 'Unknown',
+        faceDetected: true
       };
     }
 
-    return { matchFound: false, confidence: result.confidence || 'Unknown' };
+    return { matchFound: false, confidence: result.confidence || 'Unknown', faceDetected: true };
 
   } catch (error) {
     console.error("Gemini Identification Error:", error);
-    return { matchFound: false };
+    return { matchFound: false, faceDetected: false };
   }
 };

@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Ticket, TicketStatus, TicketType, User, Event } from './types';
 import { Navbar } from './components/Navbar';
 import { TICKET_PRICES } from './constants';
-import { validateFaceForRegistration, identifyUserAtGate } from './services/geminiService';
+import { validateFaceForRegistration as geminiValidateFace, identifyUserAtGate } from './services/geminiService';
+import { validateFaceForRegistration, compareFaces, loadFaceApiModels } from './services/faceApiService';
 import { addTicket, subscribeToTickets, updateTicketStatus } from './services/firestoreService';
 import { subscribeToActiveEvents, incrementEventAttendees } from './services/eventsService';
 import { CameraCapture } from './components/CameraCapture';
@@ -136,6 +137,7 @@ const EventRegistrationFlow = ({ event, onComplete, onBack }: { event: Event; on
     setIsProcessing(true);
     setFaceError(null);
     
+    // Usar face-api.js para validação e extração de descriptor
     const validation = await validateFaceForRegistration(base64);
     
     if (!validation.isValid) {
@@ -158,7 +160,8 @@ const EventRegistrationFlow = ({ event, onComplete, onBack }: { event: Event; on
       price: event.isFree ? 0 : event.price,
       status: TicketStatus.ACTIVE,
       purchaseDate: new Date().toISOString(),
-      faceImageBase64: base64
+      faceImageBase64: base64,
+      faceDescriptor: validation.descriptor // 128 vetores numéricos para reconhecimento
     };
 
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -353,6 +356,7 @@ const FreeRegistrationFlow = ({ onComplete }: { onComplete: (ticket: Ticket) => 
     // Create free ticket
     const newTicket: Ticket = {
       id: Math.random().toString(36).substr(2, 9).toUpperCase(),
+      eventId: '', // Will be set by parent component
       userId: Math.random().toString(36).substr(2, 9),
       user: {
         id: Math.random().toString(36).substr(2, 9),
@@ -364,7 +368,8 @@ const FreeRegistrationFlow = ({ onComplete }: { onComplete: (ticket: Ticket) => 
       price: 0,
       status: TicketStatus.ACTIVE,
       purchaseDate: new Date().toISOString(),
-      faceImageBase64: base64
+      faceImageBase64: base64,
+      faceDescriptor: validation.descriptor
     };
 
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -505,6 +510,7 @@ const PurchaseFlow = ({ onComplete }: { onComplete: (ticket: Ticket) => void }) 
     // Create ticket
     const newTicket: Ticket = {
       id: Math.random().toString(36).substr(2, 9).toUpperCase(),
+      eventId: '', // Will be set by parent component
       userId: Math.random().toString(36).substr(2, 9),
       user: {
         id: Math.random().toString(36).substr(2, 9),
@@ -516,7 +522,8 @@ const PurchaseFlow = ({ onComplete }: { onComplete: (ticket: Ticket) => void }) 
       price: TICKET_PRICES[formData.type],
       status: TicketStatus.ACTIVE,
       purchaseDate: new Date().toISOString(),
-      faceImageBase64: base64
+      faceImageBase64: base64,
+      faceDescriptor: validation.descriptor
     };
 
     // Simulate save
@@ -818,16 +825,79 @@ const GateScanner = ({ tickets, onEntry, events, selectedEventId, onSelectEvent,
     
     setScannedData({ match: false, loading: true });
     
-    // Comparar apenas com o ticket verificado por email
+    // Verificar se o ticket tem face descriptor (novo sistema) ou apenas base64 (legado)
+    if (verifiedTicket.faceDescriptor && verifiedTicket.faceDescriptor.length > 0) {
+      // Usar face-api.js para comparação precisa
+      const result = await compareFaces(base64, verifiedTicket.faceDescriptor);
+      
+      console.log('Face-API comparison result:', result);
+      
+      // Verificar se rosto foi detectado
+      if (!result.faceDetected) {
+        setScannedData({
+          match: false,
+          loading: false,
+          message: result.error || 'Nenhum rosto detectado. Posicione o rosto na câmera.'
+        });
+        return;
+      }
+      
+      // Verificar match - aceitar High e Medium
+      if (result.isMatch && result.confidence !== 'Low') {
+        onEntry(verifiedTicket.id);
+        setScannedData({
+          match: true,
+          loading: false,
+          ticket: verifiedTicket,
+          message: `Confiança: ${result.confidence} (Distância: ${result.distance.toFixed(3)})`
+        });
+        return;
+      }
+      
+      // Confiança baixa
+      if (result.confidence === 'Low') {
+        setScannedData({
+          match: false,
+          loading: false,
+          message: `Verificação inconclusiva. Distância: ${result.distance.toFixed(3)} - Tente com melhor iluminação.`
+        });
+        return;
+      }
+      
+      // Não é match
+      setScannedData({
+        match: false,
+        loading: false,
+        message: `Rosto não corresponde ao cadastro. (Distância: ${result.distance.toFixed(3)})`
+      });
+      return;
+    }
+    
+    // Fallback: usar Gemini para tickets sem faceDescriptor (legado)
     const result = await identifyUserAtGate(base64, [verifiedTicket]);
     
-    if (result.matchFound && result.ticketId === verifiedTicket.id) {
+    console.log('Gemini recognition result (legacy):', result);
+    
+    if (result.faceDetected === false) {
+      setScannedData({
+        match: false,
+        loading: false,
+        message: `Nenhum rosto detectado. Remova obstruções e tente novamente.`
+      });
+      return;
+    }
+    
+    const isValidMatch = result.matchFound && 
+                         result.ticketId === verifiedTicket.id && 
+                         result.confidence !== 'Low';
+    
+    if (isValidMatch) {
       onEntry(verifiedTicket.id);
       setScannedData({
         match: true,
         loading: false,
         ticket: verifiedTicket,
-        message: `Confiança da IA: ${result.confidence || 'N/A'}`
+        message: `Confiança: ${result.confidence || 'N/A'} (Gemini - legado)`
       });
       return;
     }
@@ -835,7 +905,7 @@ const GateScanner = ({ tickets, onEntry, events, selectedEventId, onSelectEvent,
     setScannedData({
       match: false,
       loading: false,
-      message: `O rosto não corresponde ao cadastro deste email. (Confiança: ${result.confidence || 'N/A'})`
+      message: `O rosto não corresponde. (${result.confidence || 'N/A'})`
     });
   };
 
@@ -1186,6 +1256,11 @@ const AppContent = () => {
       setView('admin-events');
     }
   }, [view, isAuthenticated]);
+
+  // Pré-carregar modelos de reconhecimento facial
+  useEffect(() => {
+    loadFaceApiModels().catch(console.error);
+  }, []);
 
   // Carregar tickets do Firestore em tempo real
   useEffect(() => {

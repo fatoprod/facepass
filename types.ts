@@ -68,7 +68,8 @@ export interface Ticket {
   price: number;
   status: TicketStatus;
   purchaseDate: string;
-  faceImageBase64?: string; // Base64 encoded face image for biometric verification
+  faceImageBase64?: string; // Base64 encoded face image for display
+  faceDescriptor?: number[]; // 128 floating point numbers for face recognition
 }
 
 export interface VerificationResult {
