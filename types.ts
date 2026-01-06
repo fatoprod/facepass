@@ -13,11 +13,35 @@ export enum TicketType {
   BACKSTAGE = 'BACKSTAGE'
 }
 
+// Roles de usuário para controle de acesso
+export enum UserRole {
+  USER = 'USER',           // Usuário comum (compra ingressos)
+  OPERATOR = 'OPERATOR',   // Operador de catraca
+  MANAGER = 'MANAGER',     // Gerente de eventos
+  ADMIN = 'ADMIN'          // Administrador do sistema
+}
+
+// Interface básica para usuário em tickets (sem autenticação)
 export interface User {
   id: string;
   name: string;
   email: string;
   cpf: string;
+}
+
+// Interface completa para usuários autenticados
+export interface AuthenticatedUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
+  cpf?: string;
+  phone?: string;
+  photoURL?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt?: string;
 }
 
 export interface Event {

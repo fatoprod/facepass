@@ -2,31 +2,131 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Coleção de eventos
+    // ==========================================
+    // FUNÇÕES AUXILIARES DE AUTENTICAÇÃO
+    // ==========================================
+    
+    // Verifica se o usuário está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Obtém os dados do usuário autenticado
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    // Verifica se o usuário tem uma role específica
+    function hasRole(role) {
+      return isAuthenticated() && getUserData().role == role;
+    }
+    
+    // Verifica se o usuário é admin
+    function isAdmin() {
+      return hasRole('ADMIN');
+    }
+    
+    // Verifica se o usuário é gerente ou superior
+    function isManagerOrHigher() {
+      let userRole = getUserData().role;
+      return isAuthenticated() && (userRole == 'ADMIN' || userRole == 'MANAGER');
+    }
+    
+    // Verifica se o usuário é operador ou superior
+    function isOperatorOrHigher() {
+      let userRole = getUserData().role;
+      return isAuthenticated() && (userRole == 'ADMIN' || userRole == 'MANAGER' || userRole == 'OPERATOR');
+    }
+    
+    // Verifica se o usuário está ativo
+    function isActiveUser() {
+      return isAuthenticated() && getUserData().isActive == true;
+    }
+    
+    // ==========================================
+    // COLEÇÃO DE USUÁRIOS
+    // ==========================================
+    match /users/{userId} {
+      // Usuário pode ler seus próprios dados
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      
+      // Criar próprio perfil (no registro) - apenas role USER
+      allow create: if isAuthenticated() && request.auth.uid == userId 
+        && request.resource.data.role == 'USER'
+        && request.resource.data.isActive == true;
+      
+      // Usuário pode atualizar seus próprios dados (exceto role e isActive)
+      allow update: if isAuthenticated() && request.auth.uid == userId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.isActive == resource.data.isActive;
+      
+      // Apenas admin pode atualizar role e status de outros usuários
+      allow update: if isAdmin() && request.auth.uid != userId;
+      
+      // Apenas admin pode deletar usuários
+      allow delete: if isAdmin();
+    }
+    
+    // Lista de todos os usuários (apenas admin)
+    match /users/{document=**} {
+      allow list: if isAdmin();
+    }
+    
+    // ==========================================
+    // COLEÇÃO DE EVENTOS
+    // ==========================================
     match /events/{eventId} {
       // Qualquer um pode ler eventos ativos
       allow read: if true;
       
-      // Permite criar, editar e excluir eventos (em produção, adicionar autenticação)
-      allow create: if isValidEvent(request.resource.data);
-      allow update: if true;
-      allow delete: if true;
+      // Apenas gerentes e admins podem criar eventos
+      allow create: if isManagerOrHigher() && isActiveUser() && isValidEvent(request.resource.data);
+      
+      // Apenas gerentes e admins podem atualizar eventos
+      allow update: if isManagerOrHigher() && isActiveUser();
+      
+      // Apenas admins podem deletar eventos
+      allow delete: if isAdmin() && isActiveUser();
     }
     
-    // Coleção de tickets
+    // ==========================================
+    // COLEÇÃO DE TICKETS
+    // ==========================================
     match /tickets/{ticketId} {
-      // Qualquer um pode ler tickets (necessário para o scanner da catraca)
-      allow read: if true;
+      // Operadores, gerentes e admins podem ler tickets (para validação na catraca)
+      // Usuários podem ver seus próprios tickets
+      allow read: if isOperatorOrHigher() || 
+        (isAuthenticated() && resource.data.userId == request.auth.uid);
       
-      // Permite criar novos tickets (compra de ingressos)
-      allow create: if isValidTicket(request.resource.data);
+      // Qualquer usuário autenticado pode comprar tickets
+      allow create: if isAuthenticated() && isActiveUser() && isValidTicket(request.resource.data);
       
-      // Apenas permite atualizar o campo 'status' e 'updatedAt'
-      allow update: if isValidStatusUpdate(request.resource.data, resource.data);
+      // Operadores podem atualizar status (para marcar como usado)
+      // Gerentes e admins têm acesso total
+      allow update: if (isOperatorOrHigher() && isActiveUser() && isValidStatusUpdate(request.resource.data, resource.data))
+        || isManagerOrHigher();
       
-      // Não permite deletar tickets em produção
-      allow delete: if false;
+      // Apenas admins podem deletar tickets
+      allow delete: if isAdmin() && isActiveUser();
     }
+    
+    // ==========================================
+    // LOGS DE ACESSO (AUDITORIA)
+    // ==========================================
+    match /accessLogs/{logId} {
+      // Apenas admins e gerentes podem ler logs
+      allow read: if isManagerOrHigher() && isActiveUser();
+      
+      // Operadores podem criar logs (registro de entrada na catraca)
+      allow create: if isOperatorOrHigher() && isActiveUser();
+      
+      // Ninguém pode atualizar ou deletar logs
+      allow update, delete: if false;
+    }
+    
+    // ==========================================
+    // FUNÇÕES DE VALIDAÇÃO
+    // ==========================================
     
     // Função para validar estrutura do evento
     function isValidEvent(data) {
@@ -57,12 +157,6 @@ service cloud.firestore {
         && newData.type == existingData.type
         && newData.price == existingData.price;
     }
-    
-    // Logs de acesso (para auditoria)
-    match /accessLogs/{logId} {
-      allow read: if false;
-      allow create: if true;
-      allow update, delete: if false;
-    }
   }
 }
+
