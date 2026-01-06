@@ -7,6 +7,8 @@ import { addTicket, subscribeToTickets, updateTicketStatus } from './services/fi
 import { subscribeToActiveEvents, incrementEventAttendees } from './services/eventsService';
 import { CameraCapture } from './components/CameraCapture';
 import { AdminEvents } from './components/AdminEvents';
+import { LoginPage } from './components/LoginPage';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { 
   CheckCircle2, 
   AlertCircle, 
@@ -878,10 +880,11 @@ const GateScanner = ({ tickets, onEntry }: { tickets: Ticket[], onEntry: (id: st
   );
 };
 
-// --- Main App Component ---
+// --- Main App Content Component ---
 
-const App = () => {
-  const [view, setView] = useState('home'); // home, event-register, admin, admin-events, gate
+const AppContent = () => {
+  const { isAuthenticated } = useAuth();
+  const [view, setView] = useState('home'); // home, event-register, admin, admin-events, gate, login
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -889,6 +892,13 @@ const App = () => {
   const [lastPurchasedTicket, setLastPurchasedTicket] = useState<Ticket | null>(null);
   const [isLoadingTickets, setIsLoadingTickets] = useState(true);
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
+
+  // Redirecionar para login se tentar acessar área admin sem autenticação
+  useEffect(() => {
+    if ((view === 'admin' || view === 'admin-events') && !isAuthenticated) {
+      setView('login');
+    }
+  }, [view, isAuthenticated]);
 
   // Carregar tickets do Firestore em tempo real
   useEffect(() => {
@@ -945,7 +955,11 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 font-sans selection:bg-brand-500 selection:text-white">
-      <Navbar currentView={view} setView={(v) => { setView(v); setSelectedEvent(null); }} />
+      <Navbar 
+        currentView={view} 
+        setView={(v) => { setView(v); setSelectedEvent(null); }} 
+        isAuthenticated={isAuthenticated}
+      />
 
       <main>
         {view === 'home' && (
@@ -962,8 +976,11 @@ const App = () => {
             onBack={() => { setView('home'); setSelectedEvent(null); }}
           />
         )}
-        {view === 'admin' && <AdminDashboard tickets={tickets} />}
-        {view === 'admin-events' && <AdminEvents />}
+        {view === 'login' && (
+          <LoginPage onSuccess={() => setView('admin-events')} />
+        )}
+        {view === 'admin' && isAuthenticated && <AdminDashboard tickets={tickets} />}
+        {view === 'admin-events' && isAuthenticated && <AdminEvents />}
         {view === 'gate' && <GateScanner tickets={tickets} onEntry={handleEntry} />}
       </main>
 
@@ -998,6 +1015,15 @@ const App = () => {
         </div>
       )}
     </div>
+  );
+};
+
+// --- Main App Component with Auth Provider ---
+const App = () => {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 };
 
