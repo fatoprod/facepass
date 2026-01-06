@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Ticket, TicketStatus, TicketType, User, Event } from './types';
 import { Navbar } from './components/Navbar';
 import { TICKET_PRICES } from './constants';
-import { validateFaceForRegistration as geminiValidateFace, identifyUserAtGate } from './services/geminiService';
 import { validateFaceForRegistration, compareFaces, loadFaceApiModels } from './services/faceApiService';
 import { addTicket, subscribeToTickets, updateTicketStatus } from './services/firestoreService';
 import { subscribeToActiveEvents, incrementEventAttendees } from './services/eventsService';
@@ -821,91 +820,52 @@ const GateScanner = ({ tickets, onEntry, events, selectedEventId, onSelectEvent,
   };
 
   const handleScan = async (base64: string) => {
-    if (!verifiedTicket) return;
+    if (!verifiedTicket || !verifiedTicket.faceDescriptor) return;
     
     setScannedData({ match: false, loading: true });
     
-    // Verificar se o ticket tem face descriptor (novo sistema) ou apenas base64 (legado)
-    if (verifiedTicket.faceDescriptor && verifiedTicket.faceDescriptor.length > 0) {
-      // Usar face-api.js para comparação precisa
-      const result = await compareFaces(base64, verifiedTicket.faceDescriptor);
-      
-      console.log('Face-API comparison result:', result);
-      
-      // Verificar se rosto foi detectado
-      if (!result.faceDetected) {
-        setScannedData({
-          match: false,
-          loading: false,
-          message: result.error || 'Nenhum rosto detectado. Posicione o rosto na câmera.'
-        });
-        return;
-      }
-      
-      // Verificar match - aceitar High e Medium
-      if (result.isMatch && result.confidence !== 'Low') {
-        onEntry(verifiedTicket.id);
-        setScannedData({
-          match: true,
-          loading: false,
-          ticket: verifiedTicket,
-          message: `Confiança: ${result.confidence} (Distância: ${result.distance.toFixed(3)})`
-        });
-        return;
-      }
-      
-      // Confiança baixa
-      if (result.confidence === 'Low') {
-        setScannedData({
-          match: false,
-          loading: false,
-          message: `Verificação inconclusiva. Distância: ${result.distance.toFixed(3)} - Tente com melhor iluminação.`
-        });
-        return;
-      }
-      
-      // Não é match
+    // Usar face-api.js para comparação precisa
+    const result = await compareFaces(base64, verifiedTicket.faceDescriptor);
+    
+    console.log('Face-API comparison result:', result);
+    
+    // Verificar se rosto foi detectado
+    if (!result.faceDetected) {
       setScannedData({
         match: false,
         loading: false,
-        message: `Rosto não corresponde ao cadastro. (Distância: ${result.distance.toFixed(3)})`
+        message: result.error || 'Nenhum rosto detectado. Posicione o rosto na câmera.'
       });
       return;
     }
     
-    // Fallback: usar Gemini para tickets sem faceDescriptor (legado)
-    const result = await identifyUserAtGate(base64, [verifiedTicket]);
-    
-    console.log('Gemini recognition result (legacy):', result);
-    
-    if (result.faceDetected === false) {
-      setScannedData({
-        match: false,
-        loading: false,
-        message: `Nenhum rosto detectado. Remova obstruções e tente novamente.`
-      });
-      return;
-    }
-    
-    const isValidMatch = result.matchFound && 
-                         result.ticketId === verifiedTicket.id && 
-                         result.confidence !== 'Low';
-    
-    if (isValidMatch) {
+    // Verificar match - aceitar High e Medium
+    if (result.isMatch && result.confidence !== 'Low') {
       onEntry(verifiedTicket.id);
       setScannedData({
         match: true,
         loading: false,
         ticket: verifiedTicket,
-        message: `Confiança: ${result.confidence || 'N/A'} (Gemini - legado)`
+        message: `Confiança: ${result.confidence} (Distância: ${result.distance.toFixed(3)})`
       });
       return;
     }
-
+    
+    // Confiança baixa
+    if (result.confidence === 'Low') {
+      setScannedData({
+        match: false,
+        loading: false,
+        message: `Verificação inconclusiva. Distância: ${result.distance.toFixed(3)} - Tente com melhor iluminação.`
+      });
+      return;
+    }
+    
+    // Não é match
     setScannedData({
       match: false,
       loading: false,
-      message: `O rosto não corresponde. (${result.confidence || 'N/A'})`
+      message: `Rosto não corresponde ao cadastro. (Distância: ${result.distance.toFixed(3)})`
     });
   };
 
