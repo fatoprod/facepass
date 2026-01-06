@@ -1,0 +1,7 @@
+{
+  "name": "FacePass Eventos",
+  "description": "Sistema de bilhetagem e controle de acesso com reconhecimento facial alimentado por IA Gemini.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

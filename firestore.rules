@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Coleção de eventos
+    match /events/{eventId} {
+      // Qualquer um pode ler eventos ativos
+      allow read: if true;
+      
+      // Permite criar, editar e excluir eventos (em produção, adicionar autenticação)
+      allow create: if isValidEvent(request.resource.data);
+      allow update: if true;
+      allow delete: if true;
+    }
+    
+    // Coleção de tickets
+    match /tickets/{ticketId} {
+      // Qualquer um pode ler tickets (necessário para o scanner da catraca)
+      allow read: if true;
+      
+      // Permite criar novos tickets (compra de ingressos)
+      allow create: if isValidTicket(request.resource.data);
+      
+      // Apenas permite atualizar o campo 'status' e 'updatedAt'
+      allow update: if isValidStatusUpdate(request.resource.data, resource.data);
+      
+      // Não permite deletar tickets em produção
+      allow delete: if false;
+    }
+    
+    // Função para validar estrutura do evento
+    function isValidEvent(data) {
+      return data.keys().hasAll(['name', 'date', 'location', 'isFree', 'price', 'maxCapacity', 'isActive'])
+        && data.name is string
+        && data.name.size() > 0
+        && data.price is number
+        && data.price >= 0
+        && data.maxCapacity is number
+        && data.maxCapacity > 0;
+    }
+    
+    // Função para validar estrutura do ticket
+    function isValidTicket(data) {
+      return data.keys().hasAll(['eventId', 'userId', 'user', 'type', 'price', 'status', 'purchaseDate'])
+        && data.user.keys().hasAll(['id', 'name', 'email', 'cpf'])
+        && data.type in ['GRATUITO', 'PADRAO', 'VIP', 'BACKSTAGE']
+        && data.status in ['AGUARDANDO_PAGAMENTO', 'PAGO_AGUARDANDO_ROSTO', 'ATIVO', 'UTILIZADO', 'EXPIRADO']
+        && data.price is number
+        && data.price >= 0;
+    }
+    
+    // Função para validar atualização de status
+    function isValidStatusUpdate(newData, existingData) {
+      return newData.status in ['AGUARDANDO_PAGAMENTO', 'PAGO_AGUARDANDO_ROSTO', 'ATIVO', 'UTILIZADO', 'EXPIRADO']
+        && newData.userId == existingData.userId
+        && newData.user == existingData.user
+        && newData.type == existingData.type
+        && newData.price == existingData.price;
+    }
+    
+    // Logs de acesso (para auditoria)
+    match /accessLogs/{logId} {
+      allow read: if false;
+      allow create: if true;
+      allow update, delete: if false;
+    }
+  }
+}
