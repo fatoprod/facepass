@@ -1,6 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Ticket } from "../types";
-import { urlToBase64 } from './storageService';
 
 // Helper to strip data url prefix
 const cleanBase64 = (dataUrl: string) => dataUrl.split(',')[1];
@@ -57,7 +56,6 @@ export const validateFaceForRegistration = async (imageBase64: string): Promise<
 
 /**
  * Compares a scanned face (gate) against a list of registered ticket holders.
- * Supports both base64 images and Firebase Storage URLs.
  * Note: In a real production app, you would use a Vector Database.
  * For this demo, we use Gemini's multimodal context window to find a match.
  */
@@ -66,8 +64,8 @@ export const identifyUserAtGate = async (
   candidates: Ticket[]
 ): Promise<{ matchFound: boolean; ticketId?: string; confidence?: string }> => {
   
-  // Filter candidates that have either base64 or URL images
-  const validCandidates = candidates.filter(t => t.faceImageBase64 || t.faceImageUrl);
+  // Filter candidates that have base64 images
+  const validCandidates = candidates.filter(t => t.faceImageBase64);
 
   if (validCandidates.length === 0) {
     return { matchFound: false, confidence: 'N/A' };
@@ -89,26 +87,14 @@ export const identifyUserAtGate = async (
       }
     ];
 
-    // Add candidates to the prompt - load from URL if needed
+    // Add candidates to the prompt
     for (const ticket of validCandidates) {
-      let imageBase64 = ticket.faceImageBase64;
-      
-      // If no base64 but has URL, fetch the image
-      if (!imageBase64 && ticket.faceImageUrl) {
-        try {
-          imageBase64 = await urlToBase64(ticket.faceImageUrl);
-        } catch (error) {
-          console.error(`Error loading image for ticket ${ticket.id}:`, error);
-          continue; // Skip this candidate
-        }
-      }
-      
-      if (imageBase64) {
+      if (ticket.faceImageBase64) {
         parts.push({ text: `CANDIDATE_ID: ${ticket.id}` });
         parts.push({
           inlineData: {
             mimeType: "image/jpeg",
-            data: cleanBase64(imageBase64)
+            data: cleanBase64(ticket.faceImageBase64)
           }
         });
       }

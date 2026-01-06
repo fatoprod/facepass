@@ -10,14 +10,38 @@ interface CameraCaptureProps {
 export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, label = "Capturar Foto", autoStart = true }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [error, setError] = useState<string>('');
 
+  const stopCamera = useCallback(() => {
+    // Stop all tracks from the stored stream reference
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log('Camera track stopped:', track.kind);
+      });
+      streamRef.current = null;
+    }
+    
+    // Also clear the video element
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
+    setIsStreaming(false);
+  }, []);
+
   const startCamera = useCallback(async () => {
     try {
       setError('');
+      // Stop any existing stream first
+      stopCamera();
+      
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      streamRef.current = stream;
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         setIsStreaming(true);
@@ -26,16 +50,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, label =
       setError("Não foi possível acessar a câmera.");
       console.error(err);
     }
-  }, []);
-
-  const stopCamera = useCallback(() => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
-      videoRef.current.srcObject = null;
-      setIsStreaming(false);
-    }
-  }, []);
+  }, [stopCamera]);
 
   const capture = useCallback(() => {
     if (videoRef.current && canvasRef.current) {
