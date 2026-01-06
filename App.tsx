@@ -827,7 +827,7 @@ const GateScanner = ({ tickets, onEntry, events, selectedEventId, onSelectEvent,
         match: true,
         loading: false,
         ticket: verifiedTicket,
-        message: `Confiança: ${result.confidence}`
+        message: `Confiança da IA: ${result.confidence || 'N/A'}`
       });
       return;
     }
@@ -835,7 +835,7 @@ const GateScanner = ({ tickets, onEntry, events, selectedEventId, onSelectEvent,
     setScannedData({
       match: false,
       loading: false,
-      message: "O rosto não corresponde ao cadastro deste email."
+      message: `O rosto não corresponde ao cadastro deste email. (Confiança: ${result.confidence || 'N/A'})`
     });
   };
 

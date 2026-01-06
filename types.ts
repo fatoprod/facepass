@@ -68,7 +68,8 @@ export interface Ticket {
   price: number;
   status: TicketStatus;
   purchaseDate: string;
-  faceImageBase64?: string; // The registered face
+  faceImageBase64?: string; // Legacy: base64 encoded face image (in-memory only)
+  faceImageUrl?: string;    // Firebase Storage URL for the face image
 }
 
 export interface VerificationResult {

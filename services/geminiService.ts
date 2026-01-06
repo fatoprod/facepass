@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Ticket } from "../types";
+import { urlToBase64 } from './storageService';
 
 // Helper to strip data url prefix
 const cleanBase64 = (dataUrl: string) => dataUrl.split(',')[1];
@@ -56,6 +57,7 @@ export const validateFaceForRegistration = async (imageBase64: string): Promise<
 
 /**
  * Compares a scanned face (gate) against a list of registered ticket holders.
+ * Supports both base64 images and Firebase Storage URLs.
  * Note: In a real production app, you would use a Vector Database.
  * For this demo, we use Gemini's multimodal context window to find a match.
  */
@@ -64,11 +66,11 @@ export const identifyUserAtGate = async (
   candidates: Ticket[]
 ): Promise<{ matchFound: boolean; ticketId?: string; confidence?: string }> => {
   
-  // Filter candidates that actually have images
-  const validCandidates = candidates.filter(t => t.faceImageBase64);
+  // Filter candidates that have either base64 or URL images
+  const validCandidates = candidates.filter(t => t.faceImageBase64 || t.faceImageUrl);
 
   if (validCandidates.length === 0) {
-    return { matchFound: false };
+    return { matchFound: false, confidence: 'N/A' };
   }
 
   try {
@@ -77,7 +79,7 @@ export const identifyUserAtGate = async (
 
     // Construct the prompt with the target image and labeled candidate images
     const parts: any[] = [
-      { text: "You are a security officer at an event turnstile. Your task is to identify if the person in the 'TARGET_IMAGE' matches any of the persons in the 'CANDIDATE_IMAGES'.\n\nAnalyze facial features carefully.\n\nReturn JSON with `matchFound` (boolean) and `candidateId` (string of the matching ID, or null if no match)." },
+      { text: "You are a security officer at an event turnstile. Your task is to identify if the person in the 'TARGET_IMAGE' matches any of the persons in the 'CANDIDATE_IMAGES'.\n\nAnalyze facial features carefully.\n\nReturn JSON with:\n- `matchFound` (boolean): true if the person matches any candidate\n- `candidateId` (string): the matching ID, or null if no match\n- `confidence` (string): ALWAYS provide a confidence level as 'High', 'Medium', or 'Low' based on how certain you are of the match or non-match" },
       { text: "TARGET_IMAGE:" },
       { 
         inlineData: { 
@@ -87,16 +89,30 @@ export const identifyUserAtGate = async (
       }
     ];
 
-    // Add candidates to the prompt
-    validCandidates.forEach((ticket) => {
-      parts.push({ text: `CANDIDATE_ID: ${ticket.id}` });
-      parts.push({
-        inlineData: {
-          mimeType: "image/jpeg",
-          data: cleanBase64(ticket.faceImageBase64!)
+    // Add candidates to the prompt - load from URL if needed
+    for (const ticket of validCandidates) {
+      let imageBase64 = ticket.faceImageBase64;
+      
+      // If no base64 but has URL, fetch the image
+      if (!imageBase64 && ticket.faceImageUrl) {
+        try {
+          imageBase64 = await urlToBase64(ticket.faceImageUrl);
+        } catch (error) {
+          console.error(`Error loading image for ticket ${ticket.id}:`, error);
+          continue; // Skip this candidate
         }
-      });
-    });
+      }
+      
+      if (imageBase64) {
+        parts.push({ text: `CANDIDATE_ID: ${ticket.id}` });
+        parts.push({
+          inlineData: {
+            mimeType: "image/jpeg",
+            data: cleanBase64(imageBase64)
+          }
+        });
+      }
+    }
 
     const response = await ai.models.generateContent({
       model: "gemini-2.0-flash", // Efficient for multimodal comparison
@@ -108,9 +124,9 @@ export const identifyUserAtGate = async (
           properties: {
             matchFound: { type: Type.BOOLEAN },
             candidateId: { type: Type.STRING, nullable: true },
-            confidence: { type: Type.STRING, description: "High, Medium, or Low" }
+            confidence: { type: Type.STRING, description: "Confidence level: High, Medium, or Low" }
           },
-          required: ["matchFound"]
+          required: ["matchFound", "confidence"]
         }
       }
     });
@@ -121,11 +137,11 @@ export const identifyUserAtGate = async (
       return { 
         matchFound: true, 
         ticketId: result.candidateId,
-        confidence: result.confidence
+        confidence: result.confidence || 'Unknown'
       };
     }
 
-    return { matchFound: false };
+    return { matchFound: false, confidence: result.confidence || 'Unknown' };
 
   } catch (error) {
     console.error("Gemini Identification Error:", error);

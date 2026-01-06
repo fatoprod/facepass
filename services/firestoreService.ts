@@ -12,22 +12,44 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { Ticket, TicketStatus } from '../types';
+import { uploadFaceImage, deleteFaceImage } from './storageService';
 
 const COLLECTION_NAME = 'tickets';
 
 /**
  * Adiciona um novo ticket ao Firestore
+ * Se houver uma imagem facial em base64, faz upload para o Storage primeiro
  */
 export const addTicket = async (ticket: Omit<Ticket, 'id'>): Promise<Ticket> => {
   try {
+    // Prepare ticket data without base64 image
+    const { faceImageBase64, ...ticketData } = ticket as any;
+    
+    // First, create the ticket document to get the ID
     const docRef = await addDoc(collection(db, COLLECTION_NAME), {
-      ...ticket,
+      ...ticketData,
       createdAt: new Date().toISOString()
     });
     
+    let faceImageUrl: string | undefined;
+    
+    // If there's a base64 image, upload it to Storage
+    if (faceImageBase64) {
+      try {
+        faceImageUrl = await uploadFaceImage(faceImageBase64, ticket.eventId, docRef.id);
+        
+        // Update the ticket with the image URL
+        await updateDoc(docRef, { faceImageUrl });
+      } catch (uploadError) {
+        console.error('Erro ao fazer upload da imagem facial:', uploadError);
+        // Continue without the image URL - ticket is still valid
+      }
+    }
+    
     return {
-      ...ticket,
-      id: docRef.id
+      ...ticketData,
+      id: docRef.id,
+      faceImageUrl
     } as Ticket;
   } catch (error) {
     console.error('Erro ao adicionar ticket:', error);
@@ -70,10 +92,15 @@ export const updateTicketStatus = async (ticketId: string, status: TicketStatus)
 };
 
 /**
- * Remove um ticket do Firestore
+ * Remove um ticket do Firestore e sua imagem do Storage
  */
-export const deleteTicket = async (ticketId: string): Promise<void> => {
+export const deleteTicket = async (ticketId: string, eventId?: string): Promise<void> => {
   try {
+    // Delete face image from Storage if eventId is provided
+    if (eventId) {
+      await deleteFaceImage(eventId, ticketId);
+    }
+    
     const ticketRef = doc(db, COLLECTION_NAME, ticketId);
     await deleteDoc(ticketRef);
   } catch (error) {
